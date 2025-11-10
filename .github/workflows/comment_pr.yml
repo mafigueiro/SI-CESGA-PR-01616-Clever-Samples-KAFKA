@@ -1,0 +1,20 @@
+name: Comment on PR
+
+on: workflow_dispatch
+
+jobs:
+  comment_pr:
+    runs-on: [SI, standard]
+    name: An job to comment a PR with syft and grype results
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: List licenses and vulnerabilities
+        run: |
+          echo "List licenses and vulnerabilities" && ls -l > summary.txt && cat summary.txt
+
+      - name: Comment PR
+        uses: thollander/actions-comment-pull-request@v3
+        with:
+          file-path: summary.txt

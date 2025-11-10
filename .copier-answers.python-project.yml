@@ -1,0 +1,13 @@
+# Changes here will be overwritten by Copier
+_commit: 7f53ec5
+_src_path: git@github.com:Gradiant/SI-CLEVER-periodic-service-copier-template.git
+author_email: mafigueiro
+author_name: Marco Alvarezx
+generate_pre_commit_config: false
+initialize_pre_commit_hooks: false
+module_name: kafka
+project_description: Service to import samples data into clever via streaming
+project_license: Gradiant
+project_name: SI-CESGA-PR-01616-Clever-Samples-KAFKA
+python_version: 3.11.7
+version: 1.0.0

@@ -1,0 +1,16 @@
+name: Check vulnerabilities using Bandit
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  vulnerabilities:
+    uses: Gradiant/SI-CLEVER-ci-workflows/.github/workflows/bandit_vulnerabilities.yaml@main
+    with:
+      path: ./src

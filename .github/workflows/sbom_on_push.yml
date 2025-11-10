@@ -1,0 +1,73 @@
+name: SBOM on push
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  sbom_checks:
+    name: SBOM on PUSH
+    runs-on: [SI, standard]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python environment
+        run: |
+          echo $VIRTUAL_ENV
+          if [ ! $VIRTUAL_ENV ]; then
+            python -m venv venv
+            source venv/bin/activate
+          fi  
+          python -m pip install --upgrade pip
+      - name: Install repository dependencies
+        run: |
+          if [ ! $VIRTUAL_ENV ]; then
+            source venv/bin/activate
+          fi       
+          pip install -r ./requirements.txt -r ./tests/requirements.txt
+      - name: Get syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b .
+      - name: Create template
+        run: |
+          cat <<'EOF' > template_syft.tmpl
+          PACKAGE | VERSION | LICENSE
+          | ------ | ------- | -------
+          {{- range .artifacts}}
+          {{ .name }} | {{ .version }} | {{ if .licenses }}{{ range $index, $element := .licenses }}{{ if $index }} AND {{ end }}{{ $element.value | replace "\n" " " }}{{ end }}{{ else }}Unknown{{ end }}
+          {{- end }}
+          EOF
+      - name: Run syft
+        run: |
+          echo "### Licenses :scroll:" >> $GITHUB_STEP_SUMMARY
+          ./syft . -o template -t template_syft.tmpl > sbom.licenses.txt
+          cat sbom.licenses.txt >> $GITHUB_STEP_SUMMARY
+          cat $GITHUB_STEP_SUMMARY
+      - name: Check bad licenses
+        run: |
+          bad=$(cat sbom.licenses.txt | grep ISC | wc -l)
+          if [ $bad -gt 0 ]; then
+            echo "::warning ::Some licenses require review"
+          fi
+      - name: Get grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b .
+      - name: Run grype
+        run: |
+          echo "### Vulnerabilities :space_invader:" >> $GITHUB_STEP_SUMMARY
+          ./grype . > sbom.vulnerabilities.txt
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat sbom.vulnerabilities.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat $GITHUB_STEP_SUMMARY >> summary.txt
+      - name: Check vulnerabilities
+        run: |
+          bad=$(cat sbom.vulnerabilities.txt | grep -iE 'medium|high' | wc -l)
+          if [ $bad -gt 0 ]; then
+            echo "::warning ::Some vulnerabilities require review"
+          fi

@@ -1,0 +1,14 @@
+name: Linter and formatter checker and test
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  linter-and-formatter:
+    uses: Gradiant/SI-CLEVER-ci-workflows/.github/workflows/linter_and_formatter.yml@main

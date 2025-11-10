@@ -1,0 +1,38 @@
+name: Push develop image to harbor
+
+on:
+  push:
+    branches:
+      - develop
+
+env:
+  oci_registry: harbor.gradiant.org/SI-CESGA-PR-01616-Clever-Samples-KAFKA/kafka
+  platforms: linux/amd64
+
+jobs:
+  build-push-dev:
+    runs-on: [SI, standard]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Commit hash
+        run: |
+          COMMIT_DATE=$(date +%d%m%y)
+          echo "COMMIT_DATE=$COMMIT_DATE" >> $GITHUB_ENV
+
+          echo "COMMIT_DATE: ${{ env.COMMIT_DATE }}"
+          echo "user: ${{ secrets.HARBOR_USER }}"
+          echo "token: ${{ secrets.HARBOR_TOKEN }}"
+
+
+      - name: Build and push image
+        uses: Gradiant/SI-CLEVER-ci-workflows/.github/actions@main
+        with:
+
+          tag: dev-${{ env.COMMIT_DATE }}
+          oci_registry: ${{ env.oci_registry }}
+          username: ${{ secrets.HARBOR_USER }}
+          password: ${{ secrets.HARBOR_TOKEN }}
+          platforms: ${{ env.platforms }}
+

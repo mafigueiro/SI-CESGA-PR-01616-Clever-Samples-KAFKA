@@ -1,0 +1,4 @@
+[bandit]
+exclude = tests,.venv,docs,.pre-commit-scripts
+targets = src
+skips = B101,B601
