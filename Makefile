@@ -5,7 +5,7 @@ DOCKER_REGISTRY := harbor.gradiant.org
 DOCKER_IMAGE_TAG := $(DOCKER_REGISTRY)/$(BASE_PROJECT_NAME)/$(PROJECT_NAME):$(TAG)
 DOCKER_CONTAINER_NAME := $(BASE_PROJECT_NAME)-$(PROJECT_NAME)
 CONDA_ENV_NAME := $(shell grep "name: " ./tools/conda-env.yml | awk  '{print $$2}')
-
+APP_CONFIG_PATH := /home/mafigueiro/IdeaProjects/Clever/SI-CESGA-PR-01616-Clever-Samples-KAFKA/src/config/config.yml
 PIP_REQUIREMENTS := ./requirements.txt
 PIP_TEST_REQUIREMENTS := ./tests/requirements.txt
 
@@ -44,7 +44,11 @@ teardown-rabbitmq-compose:
 	cd tools/rabbitmq/ && $(COMPOSE) down
 
 run:  ## Run on host
-	uv run .
+	APP_CONFIG_PATH=$(APP_CONFIG_PATH) uv run python -m src
+
+run-producer:
+	APP_CONFIG_PATH=$(APP_CONFIG_PATH) \
+	uv run python tools/producer/producer_csv_to_json.py tools/producer/datos.csv
 
 black-format-code:
 	uv run black . -t py312 --line-length=80 --exclude='(.*env.*)'

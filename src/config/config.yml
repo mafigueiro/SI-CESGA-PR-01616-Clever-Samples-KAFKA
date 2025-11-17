@@ -1,0 +1,7 @@
+kind: kafka
+
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topic: "covid-datos"
+  group_id: "clever-samples-service"
+  security_protocol: "PLAINTEXT"
