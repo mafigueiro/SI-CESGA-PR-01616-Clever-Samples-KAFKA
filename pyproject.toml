@@ -37,6 +37,7 @@ dependencies = [
     "uvicorn==0.29.0",
     "wait4it==0.2.1",
     "confluent-kafka>=2.12.2",
+    "pandas>=2.3.3",
 ]
 
 [dependency-groups]

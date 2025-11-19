@@ -48,7 +48,13 @@ run:  ## Run on host
 
 run-producer:
 	APP_CONFIG_PATH=$(APP_CONFIG_PATH) \
-	uv run python tools/producer/producer_csv_to_json.py tools/producer/datos.csv
+	uv run python tools/producer/producer_csv_to_json.py tools/producer/datos.csv 999999999
+
+# Si llamas con número -> solo esas filas
+run-producer-%:
+	APP_CONFIG_PATH=$(APP_CONFIG_PATH) \
+	uv run python tools/producer/producer_csv_to_json.py tools/producer/datos.csv $*
+
 
 black-format-code:
 	uv run black . -t py312 --line-length=80 --exclude='(.*env.*)'

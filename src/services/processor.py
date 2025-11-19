@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List
 
 from src.logger import logger
+from src.services.clever_service import CleverService
 
 DATE_FIELD_CANDIDATES = ["fecha", "date", "dia", "día"]  # por si cambian nombres en el futuro
 
@@ -123,6 +124,8 @@ def _handle_records(records: Iterable[Dict[str, Any]]) -> None:
     - guardarlo en una base de datos
     De momento solo logueamos los datos normalizados.
     """
+
+    clever_service = CleverService()
     for record in records:
         normalized = _normalize_record(record)
         logger.info(
@@ -132,8 +135,8 @@ def _handle_records(records: Iterable[Dict[str, Any]]) -> None:
                 "columns": list(normalized.keys()),
             },
         )
-        # TODO: aquí iría la llamada a Clever, por ejemplo:
-        # clever_client.send_record(normalized)
+        clever_service.process_kafka_message(normalized)
+
 
 
 def process_message(payload: bytes, meta: Dict[str, Any]) -> None:
