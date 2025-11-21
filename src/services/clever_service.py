@@ -28,7 +28,6 @@ class CleverService:
             self.auto_create = bool(service_cfg.auto_create)
             logger.info(f"auto_create: {self.auto_create}")
         else:
-            # Fallback: variables de entorno (como tenías antes)
             self.has_root = os.getenv("HAS_ROOT", "false").lower() == "true"
             self.auto_create = os.getenv("AUTO_CREATE", "false").lower() == "true"
 
@@ -65,6 +64,9 @@ class CleverService:
                     extra={"entity_id": entity_id, "variable_name": variable_name},
                 )
                 self.entities_service.create_variable(entity_id, variable_name)
+                # invalidamos posibles restos en cache de variables
+                if entity_id in self._entity_vars_cache:
+                    del self._entity_vars_cache[entity_id]
             except Exception as e:
                 logger.error(
                     "Error creando variable por defecto para entidad recién creada",
@@ -120,10 +122,48 @@ class CleverService:
             )
 
             if result is None:
-                logger.warning("Ruta de entidades no resuelta", extra={"path": path_parts})
+                # Mensajes más específicos según AUTO_CREATE
+                if not self.auto_create:
+                    logger.error(
+                        "No existe la entidad para la ruta recibida y AUTO_CREATE está desactivado. "
+                        "No se crearán entidades automáticamente.",
+                        extra={
+                            "path": path_parts,
+                            "auto_create": self.auto_create,
+                            "has_root": self.has_root,
+                        },
+                    )
+                else:
+                    logger.error(
+                        "No se ha podido resolver la ruta de entidades incluso con AUTO_CREATE activo.",
+                        extra={
+                            "path": path_parts,
+                            "auto_create": self.auto_create,
+                            "has_root": self.has_root,
+                        },
+                    )
                 continue
 
             entity, created = result
+
+            # 🔁 Si se ha creado una entidad nueva, recargamos cache de entidades
+            if created:
+                try:
+                    logger.info(
+                        "Entidad creada, recargando cache de entidades (forzando refresco)",
+                        extra={"path": path_parts},
+                    )
+                    entities = self.entities_service.get_entities(force_refresh=True)
+                    self.entity_index = build_entity_index(entities)
+                    logger.info(
+                        "Cache de entidades recargada tras creación",
+                        extra={"entity_count": len(entities)},
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error recargando cache de entidades tras creación",
+                        extra={"error": str(e)},
+                    )
 
             entity_id = entity["entity_id"]
             entity_name = entity["name"]
@@ -188,13 +228,80 @@ class CleverService:
                             )
                             samples.append(sample)
                 else:
-                    logger.warning(
-                        f"✘ Variable '{variable_name}' NO está definida para la entidad",
-                        extra={
-                            "entity_id": entity_id,
-                            "entity_name": entity_name,
-                        },
-                    )
+                    # Mensajes distintos según AUTO_CREATE
+                    if not self.auto_create:
+                        logger.warning(
+                            "Variable no encontrada en la entidad y AUTO_CREATE está desactivado. "
+                            "No se creará la variable automáticamente.",
+                            extra={
+                                "entity_id": entity_id,
+                                "entity_name": entity_name,
+                                "variable_name": variable_name,
+                            },
+                        )
+                    else:
+                        logger.warning(
+                            f"✘ Variable '{variable_name}' NO está definida para la entidad. "
+                            "AUTO_CREATE está activo, se intentará crear la variable.",
+                            extra={
+                                "entity_id": entity_id,
+                                "entity_name": entity_name,
+                            },
+                        )
+
+                        # 🔧 AUTO_CREATE: crear variables que falten aunque la entidad ya exista
+                        try:
+                            logger.info(
+                                "AUTO_CREATE activo: creando variable faltante",
+                                extra={
+                                    "entity_id": entity_id,
+                                    "entity_name": entity_name,
+                                    "variable_name": variable_name,
+                                },
+                            )
+                            self.entities_service.create_variable(entity_id, variable_name)
+
+                            # invalidar cache de variables de esta entidad
+                            if entity_id in self._entity_vars_cache:
+                                del self._entity_vars_cache[entity_id]
+
+                            # volver a cargar variables y mapping
+                            entity_variables = self._get_entity_variables(
+                                entity_id=entity_id,
+                                variable_name=variable_name,
+                                entity_created=False,  # ya creada la entidad
+                            )
+                            variable_mapping = _build_variable_mapping_single(entity_variables)
+                            info_created = variable_mapping.get(var_lower)
+
+                            # si ahora ya existe, creamos también el Sample
+                            if info_created and fecha_dt is not None:
+                                valor = metrics[var]
+                                try:
+                                    valor_float = float(valor)
+                                except (TypeError, ValueError):
+                                    logger.warning(
+                                        "Valor no convertible a float tras crear variable, se ignora",
+                                        extra={"variable": variable_name, "valor": valor},
+                                    )
+                                else:
+                                    sample = Sample(
+                                        fecha=fecha_dt,
+                                        variable_id=info_created["variable_id"],
+                                        valor=valor_float,
+                                    )
+                                    samples.append(sample)
+
+                        except Exception as e:
+                            logger.error(
+                                "Error en AUTO_CREATE al crear variable faltante",
+                                extra={
+                                    "entity_id": entity_id,
+                                    "entity_name": entity_name,
+                                    "variable_name": variable_name,
+                                    "error": str(e),
+                                },
+                            )
 
             # Resumen por mensaje
             variable_mapping = variable_mapping or {}
