@@ -11,6 +11,11 @@ from typing import Dict, Any, List
 from src.logger import logger
 import time
 import httpx
+
+from src.models.entity_request import EntityRequest
+from src.models.variable_request import VariableRequest, VariableConfiguration, VariableNodeMapping
+
+
 class EntitiesService:
     """
     Servicio para interactuar con la API de entidades
@@ -252,5 +257,251 @@ class EntitiesService:
             return {
                 "success": False,
                 "error": f"Error inesperado: {str(e)}",
+                "result": {},
+            }
+
+    def get_hierarchy(self) -> Dict[str, Any]:
+        """
+        Obtiene la jerarquía de tipos de entidad desde /hierarchy.
+        """
+        url = f"{self.base_url}/hierarchy"
+        logger.info("Obteniendo jerarquía de entidades", extra={"url": url})
+
+        try:
+            resp = requests.get(url, timeout=10.0)
+            status = resp.status_code
+
+            if status == 200:
+                data = resp.json()
+                logger.info(
+                    "Jerarquía obtenida correctamente",
+                    extra={"status_code": status, "keys": list(data.keys())},
+                )
+                return {
+                    "success": True,
+                    "status_code": status,
+                    "result": data,
+                }
+
+            error_msg = f"HTTP {status}: {resp.text}"
+            logger.error("Error al obtener jerarquía de entidades", extra={"error": error_msg})
+            return {
+                "success": False,
+                "status_code": status,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except requests.exceptions.ConnectionError:
+            error_msg = "Error de conexión al servicio de entidades (hierarchy)"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error en la petición a /hierarchy: {str(e)}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except Exception as e:
+            error_msg = f"Error inesperado en get_hierarchy: {str(e)}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+    def create_entity(self, entity: EntityRequest) -> Dict[str, Any]:
+        """
+        Crea una entidad en la Entities API mediante POST /entities.
+
+        El cuerpo que se envía es el EntityRequest serializado a JSON.
+        """
+        url = f"{self.base_url}/entities"
+        logger.info(
+            "Creando nueva entidad",
+            extra={
+                "url": url,
+                "name": entity.name,
+                "type": entity.type,
+                "is_root": entity.is_root,
+                "parent_entity_id": entity.parent_entity_id,
+            },
+        )
+
+        # Compatibilidad Pydantic v1/v2
+        if hasattr(entity, "model_dump"):
+            payload = entity.model_dump()
+        else:
+            payload = entity.dict()
+
+        try:
+            resp = requests.post(url, json=payload, timeout=10.0)
+            status = resp.status_code
+
+            if status in (200, 201):
+                data = resp.json()
+                logger.info(
+                    "Entidad creada correctamente",
+                    extra={"status_code": status, "entity_id": data.get("entity_id")},
+                )
+                return {
+                    "success": True,
+                    "status_code": status,
+                    "result": data,
+                }
+
+            error_msg = f"HTTP {status}: {resp.text}"
+            logger.error(
+                "Error al crear entidad",
+                extra={"error": error_msg, "payload": payload},
+            )
+            return {
+                "success": False,
+                "status_code": status,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except requests.exceptions.ConnectionError:
+            error_msg = "Error de conexión al servicio de entidades (create_entity)"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error en la petición a /entities: {str(e)}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except Exception as e:
+            error_msg = f"Error inesperado en create_entity: {str(e)}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+    def create_variable(self, entity_id: str, name: str) -> Dict[str, Any]:
+        """
+        Crea una variable en la Entities API mediante POST
+        /entities/{entity_id}/variables.
+
+        Solo necesitas pasar:
+          - entity_id: ID de la entidad
+          - name: nombre de la variable (se usará para description, readable_name y source_name)
+        """
+
+        url = f"{self.base_url}/entities/{entity_id}/variables"
+
+        variable = VariableRequest(
+            configuration=VariableConfiguration(
+                description=name,           # ej: "Vacunados"
+                readable_name=name,         # ej: "Vacunados"
+                node_mapping=VariableNodeMapping(
+                    source_name=name,       # nombre de la variable en Kafka
+                    type="string to int",   # default que fijaste
+                    unit="int",             # default que fijaste
+                ),
+            ),
+            opc_ua_name="maval_param",      # default
+        )
+
+        logger.info(
+            "Creando nueva variable",
+            extra={
+                "url": url,
+                "entity_id": entity_id,
+                "name": name,
+            },
+        )
+
+        # Compatibilidad Pydantic v1/v2
+        if hasattr(variable, "model_dump"):
+            payload = variable.model_dump()
+        else:
+            payload = variable.dict()
+
+        try:
+            resp = requests.post(url, json=payload, timeout=10.0)
+            status = resp.status_code
+
+            if status in (200, 201):
+                data = resp.json()
+                logger.info(
+                    "Variable creada correctamente",
+                    extra={
+                        "status_code": status,
+                        "entity_id": entity_id,
+                        "variable_id": data.get("variable_id"),
+                    },
+                )
+                return {
+                    "success": True,
+                    "status_code": status,
+                    "result": data,
+                }
+
+            error_msg = f"HTTP {status}: {resp.text}"
+            logger.error(
+                "Error al crear variable",
+                extra={"error": error_msg, "payload": payload, "entity_id": entity_id},
+            )
+            return {
+                "success": False,
+                "status_code": status,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except requests.exceptions.ConnectionError:
+            error_msg = "Error de conexión al servicio de entidades (create_variable)"
+            logger.error(error_msg, extra={"entity_id": entity_id})
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error en la petición a {url}: {str(e)}"
+            logger.error(error_msg, extra={"entity_id": entity_id})
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
+                "result": {},
+            }
+
+        except Exception as e:
+            error_msg = f"Error inesperado en create_variable: {str(e)}"
+            logger.error(error_msg, extra={"entity_id": entity_id})
+            return {
+                "success": False,
+                "status_code": None,
+                "error": error_msg,
                 "result": {},
             }

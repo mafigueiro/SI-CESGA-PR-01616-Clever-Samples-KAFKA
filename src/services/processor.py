@@ -4,13 +4,37 @@ import csv
 import io
 import json
 from datetime import datetime
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
+from src.config.models import ServiceConfig
 from src.logger import logger
 from src.services.clever_service import CleverService
 
 DATE_FIELD_CANDIDATES = ["fecha", "date", "dia", "día"]  # por si cambian nombres en el futuro
 
+
+_clever_service: Optional[CleverService] = None
+
+
+def init_clever_service(service_cfg: ServiceConfig) -> None:
+    """
+    Inicializa una instancia global de CleverService usando
+    la configuración proveniente del YAML (service_cfg).
+    """
+    global _clever_service
+    _clever_service = CleverService(service_cfg=service_cfg)
+
+
+def _get_clever_service() -> CleverService:
+    """
+    Devuelve la instancia global de CleverService si existe.
+    Si no se ha inicializado (por tests, scripts, etc.), crea
+    una instancia usando variables de entorno (comportamiento antiguo).
+    """
+    global _clever_service
+    if _clever_service is None:
+        return CleverService()
+    return _clever_service
 
 def _parse_date_field(row: Dict[str, Any]) -> str:
     """
@@ -125,7 +149,7 @@ def _handle_records(records: Iterable[Dict[str, Any]]) -> None:
     De momento solo logueamos los datos normalizados.
     """
 
-    clever_service = CleverService()
+    clever_service = _get_clever_service()
     for record in records:
         normalized = _normalize_record(record)
         logger.info(

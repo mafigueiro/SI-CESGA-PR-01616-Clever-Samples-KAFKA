@@ -5,3 +5,17 @@ kafka:
   topic: "covid-datos"
   group_id: "clever-samples-service"
   security_protocol: "PLAINTEXT"
+
+service:
+  has_root: false       # si la jerarquía empieza por entidad raíz obligatoria
+  auto_create: true    # si debe crear entidades automáticamente
+
+entities_api:
+  host: "entitiesapi"
+  port: 8080
+  protocol: "http"
+
+samples_api:
+  host: "samplesapi"
+  port: 8080
+  protocol: "http"

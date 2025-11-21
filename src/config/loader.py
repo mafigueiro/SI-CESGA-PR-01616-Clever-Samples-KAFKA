@@ -6,7 +6,7 @@ from typing import Any, Dict
 import yaml
 
 from src.logger import logger
-from src.config.models import KafkaConfig, StreamingConfig
+from src.config.models import KafkaConfig, StreamingConfig, ServiceConfig, AppConfig
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -58,3 +58,25 @@ def load_streaming_config(path: Path) -> StreamingConfig:
 
     logger.warning("Config kind is 'none' or unknown; service will not consume data.")
     return StreamingConfig(kind="none")
+
+
+def load_app_config(path: Path) -> AppConfig:
+    """
+    Carga tanto la configuración de streaming como la del servicio (has_root, auto_create)
+    desde el mismo YAML.
+    """
+    logger.info("Loading app config", extra={"path": str(path)})
+    data = _load_yaml(path)
+
+    # Reutilizamos la lógica de streaming
+    streaming_cfg = load_streaming_config(path)
+
+    # Sección 'service'
+    service_data = data.get("service", {}) or {}
+
+    service_cfg = ServiceConfig(
+        has_root=bool(service_data.get("has_root", False)),
+        auto_create=bool(service_data.get("auto_create", False)),
+    )
+
+    return AppConfig(streaming=streaming_cfg, service=service_cfg)

@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Optional
 
 from src.logger import logger
-from src.config.loader import load_streaming_config
-from src.services.processor import process_message
+from src.config.loader import load_streaming_config, load_app_config
+from src.services.processor import process_message,init_clever_service
 from src.streams import client_factory
 from src.streams.base import StreamClient
 
@@ -35,9 +35,10 @@ class Runner:
                 "Mount it via ConfigMap or set APP_CONFIG_PATH."
             )
 
-        cfg = load_streaming_config(self.config_path)
-        self._client = client_factory(cfg)
+        cfg = load_app_config(self.config_path)
+        self._client = client_factory(cfg.streaming)
         self._client.connect()
+        init_clever_service(cfg.service)
 
         logger.info(
             "Runner started",
