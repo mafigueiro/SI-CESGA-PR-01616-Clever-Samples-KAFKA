@@ -8,7 +8,7 @@ kafka:
 
 service:
   has_root: false       # si la jerarquía empieza por entidad raíz obligatoria
-  auto_create: false    # si debe crear entidades automáticamente
+  auto_create: true    # si debe crear entidades automáticamente
 
 entities_api:
   host: "entitiesapi"

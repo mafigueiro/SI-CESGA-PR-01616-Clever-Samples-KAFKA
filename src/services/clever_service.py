@@ -12,7 +12,10 @@ from src.utils.entity_resolver import (
     build_entity_index,
     resolve_entity_path,
 )
+
+from src.utils.hierarchy import _load_hierarchy
 from src.utils.grouping import group_metrics_by_entity_path
+from src.models.entity_request import EntityRequest
 
 
 class CleverService:
@@ -35,8 +38,14 @@ class CleverService:
         entities = self.entities_service.get_entities()
         self.entity_index = build_entity_index(entities)
 
-        # cache de variables por entity_id
         self._entity_vars_cache = {}
+        hierarchy = _load_hierarchy()
+        self.hierarchy_raw = hierarchy["raw"]
+        self.hierarchy_children = hierarchy["children"]
+        self.hierarchy_parents = hierarchy["parents"]
+        self.hierarchy_roots = hierarchy["roots"]
+        self.hierarchy_type_levels = hierarchy["levels"]
+        self.hierarchy_max_depth = hierarchy["max_depth"]
 
         logger.info(
             "CleverService inicializado",
@@ -46,6 +55,140 @@ class CleverService:
             },
         )
 
+    # --------------------------------------------------------------------- #
+    #  Root handling
+    # --------------------------------------------------------------------- #
+    def _ensure_root_for_path(self, path_parts: tuple[str, ...]) -> bool:
+        """
+        Asegura que, si has_root=True, la primera entidad del path sea root.
+
+        - Si has_root=False: no hace nada y devuelve True.
+        - Si has_root=True:
+          * Si existe una entidad root con ese nombre: OK.
+          * Si NO existe y AUTO_CREATE=False: log de error claro y devuelve False.
+          * Si NO existe y AUTO_CREATE=True: crea root, recarga cache y devuelve True.
+
+        NOTA: aquí asumimos que el nombre de la root es la primera parte del path.
+        """
+        if not self.has_root:
+            return True
+
+        if not path_parts:
+            logger.error(
+                "Path vacío recibido con has_root=True, no se puede determinar entidad root"
+            )
+            return False
+
+        root_candidate = str(path_parts[0]).strip()
+        if not root_candidate:
+            logger.error(
+                "Nombre de entidad root vacío en el path",
+                extra={"path": path_parts},
+            )
+            return False
+
+        # Buscar una entidad con ese nombre y is_root = True
+        root_found = False
+        for ent in self.entity_index.values():
+            name = str(ent.get("name", "")).strip()
+            if name.lower() == root_candidate.lower() and ent.get("is_root", False):
+                root_found = True
+                break
+
+        if root_found:
+            logger.info(
+                "Entidad root encontrada para el path",
+                extra={"root_name": root_candidate, "path": path_parts},
+            )
+            return True
+
+        # No hay entidad root con ese nombre
+        if not self.auto_create:
+            logger.error(
+                "No hay entidad root para este caso y AUTO_CREATE está desactivado. "
+                "La primera entidad del mensaje debería ser una entidad con is_root=True.",
+                extra={
+                    "root_candidate": root_candidate,
+                    "path": path_parts,
+                    "auto_create": self.auto_create,
+                    "has_root": self.has_root,
+                },
+            )
+            return False
+
+        try:
+            logger.info(
+                "AUTO_CREATE activo y no existe entidad root. Creando entidad root...",
+                extra={
+                    "root_name": root_candidate,
+                    "path": path_parts,
+                },
+            )
+
+            if self.hierarchy_roots:
+                root_type = self.hierarchy_roots[0]
+            else:
+                # Fallback si por algún motivo no tenemos jerarquía:
+                root_type = "CASO_DE_USO"
+                logger.warning(
+                    "No se han encontrado tipos root en la jerarquía. "
+                    "Usando tipo por defecto 'CASO_DE_USO'.",
+                    extra={"path": path_parts},
+                )
+            # Construimos un EntityRequest de tipo CASO_DE_USO, is_root=True
+            # Ajusta el type si en tu Entities API se usa otro valor para la root.
+            root_request = EntityRequest(
+                name=root_candidate,
+                type=root_type,
+                is_root=True,
+                attributes={},
+                external_id=root_candidate,
+                parent_entity_id=None,
+            )
+
+            create_result = self.entities_service.create_entity(root_request)
+
+            if not create_result.get("success", False):
+                logger.error(
+                    "Fallo creando entidad root automáticamente",
+                    extra={
+                        "root_name": root_candidate,
+                        "path": path_parts,
+                        "error": create_result.get("error"),
+                        "status_code": create_result.get("status_code"),
+                    },
+                )
+                return False
+
+            logger.info(
+                "Entidad root creada correctamente",
+                extra={
+                    "root_name": root_candidate,
+                    "path": path_parts,
+                    "result": create_result.get("result"),
+                },
+            )
+
+            # Recargar cache de entidades obligatoriamente
+            entities = self.entities_service.get_entities(force_refresh=True)
+            self.entity_index = build_entity_index(entities)
+            logger.info(
+                "Cache de entidades recargada tras crear entidad root",
+                extra={"entity_count": len(entities)},
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(
+                "Error inesperado creando entidad root automáticamente",
+                extra={"root_name": root_candidate, "path": path_parts, "error": str(e)},
+            )
+            return False
+
+    # --------------------------------------------------------------------- #
+    #  Variables de entidad
+    # --------------------------------------------------------------------- #
     def _get_entity_variables(self, entity_id: str, variable_name: str, entity_created: bool) -> dict:
         """
         Obtiene (y cachea) las variables de una entidad.
@@ -55,8 +198,6 @@ class CleverService:
         - Después, si no hay nada en caché para ese entity_id, llama a la API
           para obtener las variables y las guarda en caché.
         """
-        # Si la entidad se ha creado en este mensaje y AUTO_CREATE está activo,
-        # creamos una variable por defecto con el nombre de la métrica Kafka.
         if entity_created and self.auto_create:
             try:
                 logger.info(
@@ -64,7 +205,6 @@ class CleverService:
                     extra={"entity_id": entity_id, "variable_name": variable_name},
                 )
                 self.entities_service.create_variable(entity_id, variable_name)
-                # invalidamos posibles restos en cache de variables
                 if entity_id in self._entity_vars_cache:
                     del self._entity_vars_cache[entity_id]
             except Exception as e:
@@ -77,7 +217,6 @@ class CleverService:
                     },
                 )
 
-        # Cache de variables por entity_id
         if entity_id not in self._entity_vars_cache:
             logger.info(
                 "Cache MISS de variables, llamando a EntitiesService",
@@ -93,6 +232,9 @@ class CleverService:
 
         return self._entity_vars_cache[entity_id]
 
+    # --------------------------------------------------------------------- #
+    #  Procesado del mensaje Kafka
+    # --------------------------------------------------------------------- #
     def process_kafka_message(self, normalized: dict) -> None:
         fecha = normalized.get("fecha")
 
@@ -113,7 +255,11 @@ class CleverService:
         paths = group_metrics_by_entity_path(normalized)
 
         for path_parts, metrics in paths.items():
-            # resolve_entity_path ahora devuelve Optional[tuple[dict, bool]]
+            # 1) Si has_root=True, aseguramos que la primera entidad del path sea root
+            if not self._ensure_root_for_path(path_parts):
+                continue
+
+            # 2) Resolver la ruta completa de entidades (root + subentidades)
             result = resolve_entity_path(
                 self.entity_index,
                 path_parts,
@@ -122,11 +268,12 @@ class CleverService:
             )
 
             if result is None:
-                # Mensajes más específicos según AUTO_CREATE
+                # Si hemos llegado aquí, la parte de root ya estaba controlada; aquí el fallo
+                # será por subentidades intermedias.
                 if not self.auto_create:
                     logger.error(
-                        "No existe la entidad para la ruta recibida y AUTO_CREATE está desactivado. "
-                        "No se crearán entidades automáticamente.",
+                        "No se ha podido resolver la ruta de subentidades y AUTO_CREATE está desactivado. "
+                        "No se crearán subentidades automáticamente.",
                         extra={
                             "path": path_parts,
                             "auto_create": self.auto_create,
@@ -135,7 +282,7 @@ class CleverService:
                     )
                 else:
                     logger.error(
-                        "No se ha podido resolver la ruta de entidades incluso con AUTO_CREATE activo.",
+                        "No se ha podido resolver la ruta de subentidades incluso con AUTO_CREATE activo.",
                         extra={
                             "path": path_parts,
                             "auto_create": self.auto_create,
@@ -146,12 +293,12 @@ class CleverService:
 
             entity, created = result
 
-            # 🔁 Si se ha creado una entidad nueva, recargamos cache de entidades
+            # 🔁 Si se ha creado una entidad nueva (root o subentidad), recargamos cache de entidades
             if created:
                 try:
                     logger.info(
-                        "Entidad creada, recargando cache de entidades (forzando refresco)",
-                        extra={"path": path_parts},
+                        "Entidad creada durante la resolución de ruta, recargando cache de entidades",
+                        extra={"path": path_parts, "entity_id": entity.get("entity_id")},
                     )
                     entities = self.entities_service.get_entities(force_refresh=True)
                     self.entity_index = build_entity_index(entities)
@@ -187,7 +334,7 @@ class CleverService:
                 variable_name = str(var)              # nombre tal cual viene del mensaje Kafka
                 var_lower = variable_name.strip().lower()
 
-                # 1) Obtener variables de la entidad (y crear variable si la entidad es nueva)
+                # 3) Obtener variables de la entidad (y crear variable si la entidad es nueva)
                 if entity_variables is None:
                     entity_variables = self._get_entity_variables(
                         entity_id=entity_id,
