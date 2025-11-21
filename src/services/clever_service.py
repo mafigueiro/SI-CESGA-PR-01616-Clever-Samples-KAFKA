@@ -12,7 +12,6 @@ from src.utils.entity_resolver import (
     build_entity_index,
     resolve_entity_path,
 )
-
 from src.utils.hierarchy import _load_hierarchy
 from src.utils.grouping import group_metrics_by_entity_path
 from src.models.entity_request import EntityRequest
@@ -38,20 +37,25 @@ class CleverService:
         entities = self.entities_service.get_entities()
         self.entity_index = build_entity_index(entities)
 
+        # cache de variables por entity_id
         self._entity_vars_cache = {}
-        hierarchy = _load_hierarchy()
-        self.hierarchy_raw = hierarchy["raw"]
-        self.hierarchy_children = hierarchy["children"]
-        self.hierarchy_parents = hierarchy["parents"]
-        self.hierarchy_roots = hierarchy["roots"]
-        self.hierarchy_type_levels = hierarchy["levels"]
-        self.hierarchy_max_depth = hierarchy["max_depth"]
+
+        # Cargar jerarquía una sola vez (usa caché interna)
+        hier = _load_hierarchy()
+        self.hierarchy_raw = hier["raw"]
+        self.hierarchy_children = hier["children"]
+        self.hierarchy_parents = hier["parents"]
+        self.hierarchy_roots = hier["roots"]
+        self.hierarchy_type_levels = hier["levels"]
+        self.hierarchy_max_depth = hier["max_depth"]
 
         logger.info(
             "CleverService inicializado",
             extra={
                 "has_root": self.has_root,
                 "auto_create": self.auto_create,
+                "hierarchy_max_depth": self.hierarchy_max_depth,
+                "hierarchy_roots": self.hierarchy_roots,
             },
         )
 
@@ -61,14 +65,6 @@ class CleverService:
     def _ensure_root_for_path(self, path_parts: tuple[str, ...]) -> bool:
         """
         Asegura que, si has_root=True, la primera entidad del path sea root.
-
-        - Si has_root=False: no hace nada y devuelve True.
-        - Si has_root=True:
-          * Si existe una entidad root con ese nombre: OK.
-          * Si NO existe y AUTO_CREATE=False: log de error claro y devuelve False.
-          * Si NO existe y AUTO_CREATE=True: crea root, recarga cache y devuelve True.
-
-        NOTA: aquí asumimos que el nombre de la root es la primera parte del path.
         """
         if not self.has_root:
             return True
@@ -125,21 +121,10 @@ class CleverService:
                 },
             )
 
-            if self.hierarchy_roots:
-                root_type = self.hierarchy_roots[0]
-            else:
-                # Fallback si por algún motivo no tenemos jerarquía:
-                root_type = "CASO_DE_USO"
-                logger.warning(
-                    "No se han encontrado tipos root en la jerarquía. "
-                    "Usando tipo por defecto 'CASO_DE_USO'.",
-                    extra={"path": path_parts},
-                )
-            # Construimos un EntityRequest de tipo CASO_DE_USO, is_root=True
-            # Ajusta el type si en tu Entities API se usa otro valor para la root.
+            # Construimos un EntityRequest para la entidad root
             root_request = EntityRequest(
                 name=root_candidate,
-                type=root_type,
+                type=self.hierarchy_roots[0] if self.hierarchy_roots else "CASO_DE_USO",
                 is_root=True,
                 attributes={},
                 external_id=root_candidate,
@@ -255,11 +240,41 @@ class CleverService:
         paths = group_metrics_by_entity_path(normalized)
 
         for path_parts, metrics in paths.items():
-            # 1) Si has_root=True, aseguramos que la primera entidad del path sea root
+            # -----------------------------------------------------------------
+            # 1) Control de niveles de jerarquía antes de hacer nada
+            # -----------------------------------------------------------------
+            # hierarchy_max_depth = nº de niveles de ENTIDAD (root + subniveles)
+            # Mensaje Kafka: entidad1.entidad2....entidadN.variable
+            #   -> path_parts = (entidad1..entidadN)
+            #   -> variable va en metrics
+            if self.hierarchy_max_depth and self.hierarchy_max_depth > 0:
+                if self.has_root:
+                    max_entity_levels = self.hierarchy_max_depth
+                else:
+                    # Si no usamos root, el máximo de entidades es jerarquía - 1
+                    max_entity_levels = max(self.hierarchy_max_depth - 1, 1)
+
+                if len(path_parts) > max_entity_levels:
+                    logger.error(
+                        "Mensaje con demasiados niveles de entidad según la jerarquía configurada. "
+                        "El mensaje se descarta.",
+                        extra={
+                            "path": path_parts,
+                            "entity_levels_in_message": len(path_parts),
+                            "max_entity_levels_allowed": max_entity_levels,
+                            "hierarchy_max_depth": self.hierarchy_max_depth,
+                            "has_root": self.has_root,
+                        },
+                    )
+                    continue
+
+            # -----------------------------------------------------------------
+            # 2) Si has_root=True, aseguramos que la primera entidad del path sea root
+            # -----------------------------------------------------------------
             if not self._ensure_root_for_path(path_parts):
                 continue
 
-            # 2) Resolver la ruta completa de entidades (root + subentidades)
+            # 3) Resolver la ruta completa de entidades (root + subentidades)
             result = resolve_entity_path(
                 self.entity_index,
                 path_parts,
@@ -268,8 +283,6 @@ class CleverService:
             )
 
             if result is None:
-                # Si hemos llegado aquí, la parte de root ya estaba controlada; aquí el fallo
-                # será por subentidades intermedias.
                 if not self.auto_create:
                     logger.error(
                         "No se ha podido resolver la ruta de subentidades y AUTO_CREATE está desactivado. "
@@ -334,7 +347,7 @@ class CleverService:
                 variable_name = str(var)              # nombre tal cual viene del mensaje Kafka
                 var_lower = variable_name.strip().lower()
 
-                # 3) Obtener variables de la entidad (y crear variable si la entidad es nueva)
+                # 4) Obtener variables de la entidad (y crear variable si la entidad es nueva)
                 if entity_variables is None:
                     entity_variables = self._get_entity_variables(
                         entity_id=entity_id,

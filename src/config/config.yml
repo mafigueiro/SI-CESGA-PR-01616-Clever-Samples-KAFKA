@@ -7,7 +7,7 @@ kafka:
   security_protocol: "PLAINTEXT"
 
 service:
-  has_root: false       # si la jerarquía empieza por entidad raíz obligatoria
+  has_root: true       # si la jerarquía empieza por entidad raíz obligatoria
   auto_create: true    # si debe crear entidades automáticamente
 
 entities_api:
